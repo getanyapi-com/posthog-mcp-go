@@ -144,8 +144,8 @@ Custom `Capture` sends the caller's event name verbatim, not `$mcp_custom`.
 Canonical properties include server, client, protocol, session, conversation,
 duration, tool/resource, listed tools, parameters, response, intent, error,
 source, user-agent, and vendor-client fields defined by PostHog's event reference.
-`$mcp_source` is always `posthog_mcp_analytics`; SDK language is `go` and SDK
-version is this module's version.
+`$mcp_source` is always `posthog_mcp_analytics`. The transport SDK supplies
+its standard `$lib` and `$lib_version` properties.
 
 Anonymous events use the analytics session as `distinct_id` and set
 `$process_person_profile` to false. Identified events use `Identity.DistinctID`,
@@ -237,6 +237,6 @@ goroutine semantics that are outside this contract.
 - No TypeScript/Python private-handler compatibility machinery.
 - No self-encoded legacy session token.
 - `$lib` remains `posthog-go` because `posthog-go` overwrites that property.
-  `$mcp_source`, language, and version retain unambiguous attribution.
+  `$mcp_source` retains unambiguous MCP attribution.
 - Go wrapper construction is explicit middleware rather than a global server
   registry. Duplicate attachment of the same object is request-deduplicated.
