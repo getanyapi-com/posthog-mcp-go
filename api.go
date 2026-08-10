@@ -61,7 +61,12 @@ type Analytics struct {
 	client          posthog.EnqueueClient
 	options         Options
 	fallbackSession string
-	mu              sync.RWMutex
+	lastActivity    time.Time
+	now             func() time.Time
+	sessions        map[string]*sessionState
+	generated       map[mcp.Session]string
+	touchSequence   uint64
+	mu              sync.Mutex
 }
 
 // New constructs analytics. A nil client produces disabled pass-through instrumentation.
@@ -73,10 +78,15 @@ func New(client posthog.EnqueueClient, options *Options) *Analytics {
 	if configured.MissingCapabilityToolName == "" {
 		configured.MissingCapabilityToolName = DefaultMissingCapabilityToolName
 	}
+	now := time.Now
 	return &Analytics{
 		client:          client,
 		options:         configured,
 		fallbackSession: newPrefixedID("ses"),
+		lastActivity:    now(),
+		now:             now,
+		sessions:        make(map[string]*sessionState),
+		generated:       make(map[mcp.Session]string),
 	}
 }
 
