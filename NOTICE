@@ -1,0 +1,11 @@
+posthog-mcp-go is community-maintained by AnyAPI and is not an official
+PostHog package.
+
+Behavior and test fixtures are derived in part from PostHog's MIT-licensed MCP
+analytics implementations:
+
+- posthog-js packages/mcp, commit 80f15a386621514c43f19e99ee4e3f702e4d369d
+- posthog-python posthog/mcp, commit 6e5389ac8ef1a3e9d6ce6fa02d072d6d73be3fc5
+
+Portions of those implementations were themselves derived from the
+AgentCat/MCPCat TypeScript SDK. Derived Go files retain a source notice.

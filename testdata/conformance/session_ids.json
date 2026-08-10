@@ -1,0 +1,7 @@
+[
+  {"input":"","expected":"ses_84222325cbf29ce4805967715e2fab98"},
+  {"input":"test-session-123","expected":"ses_cb1e02856aea48dca949ffd1586cbcc0"},
+  {"input":"mcp-session-abc-123","expected":"ses_a9c80f4a06bb5295af29b59a9544a481"},
+  {"input":"session-1","expected":"ses_cf49184d219541d251425ec9c7eccbf2"},
+  {"input":"クロード🤖","expected":"ses_653f90f6bd412f034134a6e6e2d8751b"}
+]
