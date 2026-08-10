@@ -32,7 +32,7 @@ var (
 	dataURLPattern   = regexp.MustCompile(`(?i)^data:[^,\s]*;base64,`)
 	dataPayload      = regexp.MustCompile(`^[A-Za-z0-9+/_-]+={0,2}$`)
 	posthogToken     = regexp.MustCompile(`\bph[a-z]_[A-Za-z0-9_-]{20,}\b`)
-	sensitiveKey     = regexp.MustCompile(`(?i)^(authorization|cookie|set-cookie|x-api-key|api[-_]?key|api[-_]?token|access[-_]?token|refresh[-_]?token|token|password|secret|client[-_]?secret|private[-_]?key)$`)
+	sensitiveKey     = regexp.MustCompile(`(?i)^(authorization|cookie|set-cookie|x-api-key|api[-_]?key|api[-_]?token|access[-_]?token|refresh[-_]?token|token|password|secret|credentials?|client[-_]?secret|private[-_]?key)$`)
 )
 
 type valueSanitizer struct {

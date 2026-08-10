@@ -11,47 +11,47 @@ Statuses are updated as vertical slices land.
 
 | Upstream test | Disposition |
 | --- | --- |
-| `basic-server` | Port through real Go SDK transports. |
+| `basic-server` | Ported through in-memory and Streamable HTTP Go SDK transports. |
 | `beforeSend` | Ported through `Analytics.Capture`: mutation, drop, error, and panic. |
 | `capture` | Ported through public `Analytics.Capture`. |
-| `client-identity` | Port request/session client attribution. |
+| `client-identity` | Ported client, protocol, session, header, and per-request metadata attribution. |
 | `compatibility` | Not applicable: Go targets one public SDK interface. |
-| `concurrent-attribution` | Port under the race detector. |
-| `context-parameters` | Port schema injection fixtures. |
-| `context-preservation` | Port customer-owned argument behavior. |
-| `conversation-id` | Port as opt-in middleware behavior. |
-| `conversation-session-id` | Port deterministic correlation fixtures. |
-| `e2e-sanitization` | Port literal request/result fixtures. |
-| `e2e-truncation` | Port literal size fixtures. |
+| `concurrent-attribution` | Ported across distinct sessions under the race detector. |
+| `context-parameters` | Ported schema injection, intent source, and stripping fixtures. |
+| `context-preservation` | Ported customer-owned argument behavior. |
+| `conversation-id` | Ported as opt-in middleware behavior with UUIDv7 fallback coverage. |
+| `conversation-session-id` | Ported deterministic correlation fixtures. |
+| `e2e-sanitization` | Ported literal request/result and sensitive-key fixtures. |
+| `e2e-truncation` | Ported literal field and event-budget fixtures. |
 | `edge-runtime-compatibility` | Not applicable to Go. |
-| `error-capture` | Port result and protocol error paths. |
-| `exceptions` | Port canonical exception sibling behavior. |
+| `error-capture` | Ported returned errors, protocol errors, `IsError`, and panics. |
+| `exceptions` | Ported canonical exception sibling behavior and opt-out. |
 | `handler-property` | Not applicable: no private handler patching. |
-| `identify` | Port identity and `$identify` behavior. |
-| `identity-cache` | Port bounded deduplication behavior. |
-| `ids` | Port UUIDv7 shape and literal deterministic vectors. |
+| `identify` | Ported identity, anonymous merge, mutation isolation, and `$identify` behavior. |
+| `identity-cache` | Ported bounded LRU and material-change deduplication behavior. |
+| `ids` | Ported UUIDv7 shape and literal deterministic TypeScript vectors. |
 | `instrument-lowlevel` | Covered through `mcp.Middleware`. |
 | `instrument-mutator` | Not applicable: no framework mutator API. |
-| `late-handler-registration` | Port late tool registration. |
+| `late-handler-registration` | Ported by registering tools after central middleware attachment. |
 | `lib-identity` | Documented deviation: `$lib` remains `posthog-go`. |
 | `logger-isolation` | Ported with a panicking `slog.Handler`. |
-| `mcp-payloads` | Port sanitization fixtures. |
-| `mcp-version-compatibility` | Port dependency-version CI matrix. |
-| `output-instructions` | Port conversation result behavior. |
-| `posthog-events` | Port every canonical event/property fixture. |
+| `mcp-payloads` | Ported exact request envelopes, owned-field exclusion, and sanitization fixtures. |
+| `mcp-version-compatibility` | Ported in CI against v1.6.1 and v1.7.0. |
+| `output-instructions` | Ported conversation text and structured result behavior. |
+| `posthog-events` | Ported canonical lifecycle, identify, exception, attribution, and envelope fixtures. |
 | `posthog-mcp` | Not applicable: no manual dispatcher in v0. |
-| `report-missing` | Port opt-in virtual tool behavior. |
-| `reserved-arguments` | Port ownership and stripping behavior. |
+| `report-missing` | Ported opt-in virtual tool, direct-call, and real-name collision behavior. |
+| `reserved-arguments` | Ported ownership, customer-field preservation, and stripping behavior. |
 | `sanitization` | Ported literal privacy vectors through public capture. |
-| `sdk-import-boundary` | Port as a compile/import test. |
-| `session-id` | Port deterministic and rollover behavior. |
+| `sdk-import-boundary` | Ported through the external-package public API test. |
+| `session-id` | Ported deterministic, per-connection, conversation, and rollover behavior. |
 | `session-token` | Explicit deviation: no Go SDK response-header seam. |
 | `sink` | Ported enqueue error and panic behavior through public capture. |
 | `stateless-session` | Covered by opt-in conversation IDs. |
 | `string-method-registration` | Not applicable to typed Go registration. |
-| `tool-categories` | Port `_meta.category` capture. |
-| `tracing-initialization` | Port initialize timing and metadata. |
-| `transport-identity` | Port HTTP headers through Streamable HTTP. |
+| `tool-categories` | Ported description and `_meta.category` capture on tool and exception events. |
+| `tracing-initialization` | Ported legacy initialize and current server/discover timing and metadata. |
+| `transport-identity` | Ported HTTP headers through Streamable HTTP. |
 | `truncation` | Ported field, recursive, and total-event limits through public capture. |
 
 ## Python
@@ -60,13 +60,13 @@ Statuses are updated as vertical slices land.
 | --- | --- |
 | `test_fastmcp` | Covered through real Go SDK middleware tests. |
 | `test_fastmcp_v2` | Covered through current Go SDK compatibility tests. |
-| `test_features_m4` | Port context, conversation, and missing-capability behavior. |
+| `test_features_m4` | Ported context, conversation, and missing-capability behavior. |
 | `test_instrumentation_fork` | Not applicable: Go owns no analytics worker/task pool. |
 | `test_lowlevel` | Covered through real Go SDK middleware tests. |
 | `test_pending_tasks` | Not applicable: no wrapper-owned background tasks. |
-| `test_pipeline` | Privacy and custom pipeline fixtures ported; canonical automatic events and IDs remain in their owning slices. |
+| `test_pipeline` | Ported privacy, custom capture, canonical automatic event, and ID fixtures. |
 | `test_posthog_mcp` | Not applicable: no manual dispatcher in v0. |
-| `test_review_fixes` | Review each regression and port applicable public behavior. |
+| `test_review_fixes` | Ported applicable hook isolation, malformed value, collision, and fail-open regressions. |
 | `test_session_token` | Explicit deviation: no Go SDK response-header seam. |
 | `test_truncation` | Ported literal limits and total-budget behavior. |
-| `test_units` | Port behavior reachable through the public API. |
+| `test_units` | Ported behavior reachable through the public API. |

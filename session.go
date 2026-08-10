@@ -53,6 +53,12 @@ func (a *Analytics) generatedSessionID(request mcp.Request) string {
 	return a.fallbackSession
 }
 
+func (a *Analytics) fallbackSessionSnapshot() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.fallbackSession
+}
+
 func (a *Analytics) generatedConnectionSessionID(connection mcp.Session) string {
 	a.mu.Lock()
 	defer a.mu.Unlock()

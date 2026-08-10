@@ -179,13 +179,15 @@ Each event passes through this order:
 
 All mutable data given to hooks or PostHog is cloned. Hook mutation cannot alter
 the MCP request, result, sibling event, or another concurrent capture.
+`BeforeSend` is the trusted final wire mutation, matching the official wrappers:
+JSON-compatible values it adds are cloned but are not re-redacted or re-truncated.
 
 `Capture` called with an MCP handler context inherits that request's attribution.
 Outside an MCP request it uses a generated anonymous session.
 
 ## 8. Privacy and size contract
 
-Before enqueue, recursively:
+Before `BeforeSend`, recursively:
 
 - redact case-insensitive secret, token, credential, authorization, cookie,
   password, and API-key fields;
@@ -206,6 +208,8 @@ Upstream limits are authoritative:
 
 Total-size reduction follows the upstream progressive depth reduction and
 largest-field truncation strategy. UTF-8 is never cut into invalid text.
+The 100 KB budget applies to the event supplied to `BeforeSend`; PostHog may
+reject a hook result that intentionally expands beyond its delivery limits.
 
 ## 9. Sessions and conversation IDs
 

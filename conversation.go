@@ -14,6 +14,8 @@ const conversationPrompt = "[SERVER]: Reuse conversation_id=%s on every subseque
 
 var conversationIDPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
+var newConversationUUIDv7 = uuid.NewV7
+
 type conversationResolution struct {
 	id     string
 	minted bool
@@ -29,9 +31,9 @@ func resolveConversationID(enabled bool, arguments map[string]any) conversationR
 			return conversationResolution{id: strings.ToLower(supplied)}
 		}
 	}
-	id, err := uuid.NewV7()
+	id, err := newConversationUUIDv7()
 	if err != nil {
-		id = uuid.New()
+		id = fallbackUUIDv7()
 	}
 	return conversationResolution{id: id.String(), minted: true}
 }

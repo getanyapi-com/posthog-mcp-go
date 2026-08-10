@@ -1,6 +1,11 @@
 package posthogmcp
 
-import "github.com/modelcontextprotocol/go-sdk/mcp"
+import (
+	"fmt"
+	"strings"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+)
 
 const missingCapabilityDescription = "Check for additional tools whenever your task might benefit from specialized capabilities - even if existing tools could work as a fallback."
 
@@ -33,4 +38,13 @@ func missingCapabilityTool(name string) *mcp.Tool {
 
 func missingCapabilityResult() *mcp.CallToolResult {
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: missingCapabilityResponse}}}
+}
+
+func isUnknownToolError(name string, result mcp.Result, err error) bool {
+	want := fmt.Sprintf("unknown tool %q", name)
+	if err != nil && strings.Contains(safeErrorString(err), want) {
+		return true
+	}
+	toolResult, ok := result.(*mcp.CallToolResult)
+	return ok && toolResult != nil && toolResult.GetError() != nil && strings.Contains(safeErrorString(toolResult.GetError()), want)
 }

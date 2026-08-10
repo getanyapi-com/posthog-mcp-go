@@ -22,14 +22,38 @@ func (a *Analytics) Middleware() mcp.Middleware {
 			if !a.Enabled() || middlewareVisited(ctx, a) {
 				return next(ctx, method, request)
 			}
+			originalContext := ctx
+			downstreamStarted := false
+			downstreamFinished := false
+			var downstreamResult mcp.Result
+			var downstreamError error
+			guardedNext := func(ctx context.Context, method string, request mcp.Request) (mcp.Result, error) {
+				downstreamStarted = true
+				downstreamResult, downstreamError = next(ctx, method, request)
+				downstreamFinished = true
+				return downstreamResult, downstreamError
+			}
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					if downstreamStarted && !downstreamFinished {
+						panic(recovered)
+					}
+					a.safeLog("analytics middleware preparation failed", "error", recovered)
+					if downstreamFinished {
+						result, err = downstreamResult, downstreamError
+					} else {
+						result, err = next(originalContext, method, request)
+					}
+				}
+			}()
 			if lifecycleEventName(method, false) == "" {
-				return next(ctx, method, request)
+				return guardedNext(ctx, method, request)
 			}
 			ctx = context.WithValue(ctx, middlewareVisitKey{}, &middlewareVisit{analytics: a, parent: middlewareVisits(ctx)})
 			started := time.Now()
 
 			if method == "tools/call" {
-				return a.handleToolCall(ctx, state, next, request, started)
+				return a.handleToolCall(ctx, state, guardedNext, request, started)
 			}
 			attribution := a.resolveAttribution(request, "")
 			identify := a.resolveIdentity(ctx, request, &attribution)
@@ -45,7 +69,7 @@ func (a *Analytics) Middleware() mcp.Middleware {
 				}
 				a.emitLifecycle(ctx, lifecycleSnapshot{method: method, request: request, result: result, err: err, started: started, attribution: attribution, identify: identify})
 			}()
-			result, err = next(ctx, method, request)
+			result, err = guardedNext(ctx, method, request)
 			if err == nil && method == "tools/list" {
 				result = a.prepareToolsList(state, result)
 			}

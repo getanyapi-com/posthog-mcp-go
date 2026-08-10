@@ -114,6 +114,20 @@ func TestCaptureSnapshotsBeforeSendResult(t *testing.T) {
 	}
 }
 
+func TestBeforeSendMutationIsFinalWireValue(t *testing.T) {
+	client := &recordingClient{}
+	analytics := posthogmcp.New(client, &posthogmcp.Options{BeforeSend: func(_ context.Context, event posthogmcp.Event) (*posthogmcp.Event, error) {
+		event.Properties["api_key"] = "hook-owned-value"
+		return &event, nil
+	}})
+	if err := analytics.Capture(context.Background(), "hook_final", nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := onlyCapture(t, client).Properties["api_key"]; got != "hook-owned-value" {
+		t.Fatalf("api_key = %v, want hook-owned final value", got)
+	}
+}
+
 func TestCaptureDropsHookFailuresAndDroppedEvents(t *testing.T) {
 	tests := []struct {
 		name string

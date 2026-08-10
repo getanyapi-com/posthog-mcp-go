@@ -16,6 +16,7 @@ const (
 
 const (
 	PropertyClientName      = "$mcp_client_name"
+	PropertyAnonDistinctID  = "$anon_distinct_id"
 	PropertyClientUserAgent = "$mcp_client_user_agent"
 	PropertyClientVersion   = "$mcp_client_version"
 	PropertyConversationID  = "$mcp_conversation_id"

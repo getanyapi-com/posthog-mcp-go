@@ -21,16 +21,17 @@ func TestCaptureSanitizationVectors(t *testing.T) {
 	analytics := posthogmcp.New(client, nil)
 
 	err := analytics.Capture(context.Background(), "vectors", map[string]any{
-		"api-key":   "private",
-		"mixedCase": map[string]any{"Client_Secret": "private"},
-		"base64url": largeBase64URL,
-		"data_url":  dataURL,
-		"ordinary":  ordinary,
-		"small":     "AAAA=",
-		"nan":       math.NaN(),
-		"positive":  math.Inf(1),
-		"negative":  math.Inf(-1),
-		"typed":     map[string]any{"type": "business-object", "value": "preserved"},
+		"api-key":    "private",
+		"credential": "private",
+		"mixedCase":  map[string]any{"Client_Secret": "private"},
+		"base64url":  largeBase64URL,
+		"data_url":   dataURL,
+		"ordinary":   ordinary,
+		"small":      "AAAA=",
+		"nan":        math.NaN(),
+		"positive":   math.Inf(1),
+		"negative":   math.Inf(-1),
+		"typed":      map[string]any{"type": "business-object", "value": "preserved"},
 	})
 	if err != nil {
 		t.Fatalf("Capture() error = %v", err)
@@ -38,6 +39,9 @@ func TestCaptureSanitizationVectors(t *testing.T) {
 	properties := onlyCapture(t, client).Properties
 	if properties["api-key"] != "[redacted]" {
 		t.Errorf("api-key = %v", properties["api-key"])
+	}
+	if properties["credential"] != "[redacted]" {
+		t.Errorf("credential = %v", properties["credential"])
 	}
 	if properties["mixedCase"].(map[string]any)["Client_Secret"] != "[redacted]" {
 		t.Error("case-insensitive sensitive key was not redacted")

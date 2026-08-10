@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -35,7 +36,7 @@ func (a *Analytics) resolveIdentity(
 		return nil
 	}
 
-	identity, ok := callIdentify(ctx, a.options.Identify, request)
+	identity, ok := callIdentify(ctx, a.options.Identify, cloneRequestForCallback(request))
 	if !ok || identity == nil {
 		return nil
 	}
@@ -51,6 +52,9 @@ func (a *Analytics) resolveIdentity(
 		Properties: make(posthog.Properties),
 	}
 	event.Properties[PropertyDurationMS] = float64(a.now().Sub(started).Microseconds()) / 1000
+	if previous == nil {
+		event.Properties[PropertyAnonDistinctID] = attribution.sessionID
+	}
 	if resourceName := requestResourceName(request); resourceName != "" {
 		event.Properties[PropertyResourceName] = resourceName
 	}
@@ -83,7 +87,10 @@ func callIdentify(ctx context.Context, identify IdentifyFunc, request mcp.Reques
 		}
 	}()
 	identity, err := identify(ctx, request)
-	return identity, err == nil
+	if err != nil {
+		return nil, false
+	}
+	return snapshotIdentity(identity)
 }
 
 func (a *Analytics) updateIdentity(sessionID string, next *Identity) (*Identity, bool) {
@@ -96,7 +103,12 @@ func (a *Analytics) updateIdentity(sessionID string, next *Identity) (*Identity,
 	return cloneIdentity(merged), publish
 }
 
-func identitiesEqual(first, second *Identity) bool {
+func identitiesEqual(first, second *Identity) (equal bool) {
+	defer func() {
+		if recover() != nil {
+			equal = false
+		}
+	}()
 	if first == nil || second == nil || first.DistinctID != second.DistinctID {
 		return first == nil && second == nil
 	}
@@ -174,70 +186,42 @@ func mergeIdentity(previous, next *Identity) *Identity {
 }
 
 func cloneIdentity(identity *Identity) *Identity {
-	if identity == nil {
-		return nil
+	cloned, _ := snapshotIdentity(identity)
+	return cloned
+}
+
+func snapshotIdentity(identity *Identity) (snapshot *Identity, ok bool) {
+	defer func() {
+		if recover() != nil {
+			snapshot, ok = nil, false
+		}
+	}()
+	if identity == nil || strings.TrimSpace(identity.DistinctID) == "" {
+		return nil, false
 	}
 	return &Identity{
-		DistinctID: identity.DistinctID,
+		DistinctID: truncateUTF8(sanitizeString(identity.DistinctID), maxStringBytes),
 		Properties: cloneIdentityProperties(identity.Properties),
 		Groups:     cloneGroups(identity.Groups),
-	}
+	}, true
 }
 
 func cloneIdentityProperties(properties posthog.Properties) posthog.Properties {
 	if properties == nil {
 		return nil
 	}
-	cloned := make(posthog.Properties, len(properties))
-	for key, value := range properties {
-		cloned[key] = cloneIdentityValue(value, 0)
-	}
-	return cloned
+	cloned, _ := sanitizeValue(properties, identityCloneDepth).(map[string]any)
+	return posthog.Properties(cloned)
 }
 
 func cloneIdentityValue(value any, depth int) any {
-	if depth >= identityCloneDepth {
-		return "[max depth]"
-	}
-	switch value := value.(type) {
-	case posthog.Properties:
-		cloned := make(posthog.Properties, len(value))
-		for key, nested := range value {
-			cloned[key] = cloneIdentityValue(nested, depth+1)
-		}
-		return cloned
-	case posthog.Groups:
-		cloned := make(posthog.Groups, len(value))
-		for key, nested := range value {
-			cloned[key] = cloneIdentityValue(nested, depth+1)
-		}
-		return cloned
-	case map[string]any:
-		cloned := make(map[string]any, len(value))
-		for key, nested := range value {
-			cloned[key] = cloneIdentityValue(nested, depth+1)
-		}
-		return cloned
-	case []any:
-		cloned := make([]any, len(value))
-		for index, nested := range value {
-			cloned[index] = cloneIdentityValue(nested, depth+1)
-		}
-		return cloned
-	case []string:
-		return append([]string(nil), value...)
-	default:
-		return value
-	}
+	return sanitizeValue(value, max(identityCloneDepth-depth, 0))
 }
 
 func cloneGroups(groups posthog.Groups) posthog.Groups {
 	if groups == nil {
 		return nil
 	}
-	cloned := make(posthog.Groups, len(groups))
-	for key, value := range groups {
-		cloned[key] = cloneIdentityValue(value, 0)
-	}
-	return cloned
+	cloned, _ := sanitizeValue(groups, identityCloneDepth).(map[string]any)
+	return posthog.Groups(cloned)
 }

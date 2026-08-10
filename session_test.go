@@ -2,6 +2,7 @@ package posthogmcp
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -89,6 +90,26 @@ func TestGeneratedSessionsDoNotCrossAttributeDistinctSDKConnections(t *testing.T
 	if first == second {
 		t.Fatalf("two SDK connections shared generated session %q", first)
 	}
+}
+
+func TestConcurrentFallbackRolloverAndCapture(t *testing.T) {
+	analytics := New(testEnqueueClient{}, nil)
+	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	analytics.now = func() time.Time { return now }
+	analytics.mu.Lock()
+	analytics.lastActivity = now.Add(-generatedSessionInactivity - time.Nanosecond)
+	analytics.mu.Unlock()
+	var wait sync.WaitGroup
+	for range 100 {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			if err := analytics.Capture(context.Background(), "concurrent", nil); err != nil {
+				t.Errorf("Capture: %v", err)
+			}
+		}()
+	}
+	wait.Wait()
 }
 
 type testEnqueueClient struct{}

@@ -9,19 +9,22 @@ import (
 )
 
 type lifecycleSnapshot struct {
-	method         string
-	request        mcp.Request
-	result         mcp.Result
-	err            error
-	started        time.Time
-	toolName       string
-	arguments      map[string]any
-	intent         string
-	conversationID string
-	missing        bool
-	attribution    requestAttribution
-	identify       *Event
-	failure        *toolFailure
+	method          string
+	request         mcp.Request
+	result          mcp.Result
+	err             error
+	started         time.Time
+	toolName        string
+	toolDescription string
+	toolCategory    string
+	arguments       map[string]any
+	intent          string
+	intentSource    string
+	conversationID  string
+	missing         bool
+	attribution     requestAttribution
+	identify        *Event
+	failure         *toolFailure
 }
 
 type automaticEventCapturer interface {
@@ -42,6 +45,7 @@ func (a *Analytics) emitLifecycle(ctx context.Context, snapshot lifecycleSnapsho
 	if eventName == "" {
 		return
 	}
+	ctx = withResolvedEventProperties(ctx, a.resolveEventProperties(ctx, snapshot.request))
 	properties := map[string]any{
 		PropertyDurationMS: float64(time.Since(snapshot.started).Microseconds()) / 1000,
 		PropertyIsError:    snapshot.err != nil,
@@ -49,13 +53,24 @@ func (a *Analytics) emitLifecycle(ctx context.Context, snapshot lifecycleSnapsho
 	addLifecycleProperties(properties, snapshot)
 	if snapshot.toolName != "" {
 		properties[PropertyToolName] = snapshot.toolName
+		properties[PropertyResourceName] = snapshot.toolName
 	}
-	if snapshot.arguments != nil {
-		properties[PropertyParameters] = snapshot.arguments
+	if snapshot.toolDescription != "" {
+		properties[PropertyToolDescription] = snapshot.toolDescription
+	}
+	if snapshot.toolCategory != "" {
+		properties[PropertyToolCategory] = snapshot.toolCategory
+	}
+	parameters := snapshot.arguments
+	if parameters == nil {
+		parameters = buildCapturedRequestParameters(snapshot.method, snapshot.request)
+	}
+	if parameters != nil {
+		properties[PropertyParameters] = parameters
 	}
 	if snapshot.intent != "" {
 		properties[PropertyIntent] = snapshot.intent
-		properties[PropertyIntentSource] = "context_parameter"
+		properties[PropertyIntentSource] = snapshot.intentSource
 	}
 	if snapshot.conversationID != "" {
 		properties[PropertyConversationID] = snapshot.conversationID
@@ -96,9 +111,6 @@ func addLifecycleProperties(properties map[string]any, snapshot lifecycleSnapsho
 		properties[PropertyResourceName] = params.URI
 	case *mcp.GetPromptParams:
 		properties[PropertyResourceName] = params.Name
-		if len(params.Arguments) > 0 {
-			properties[PropertyParameters] = params.Arguments
-		}
 	}
 	switch result := snapshot.result.(type) {
 	case *mcp.InitializeResult:
@@ -142,52 +154,105 @@ func lifecycleEventName(method string, missing bool) string {
 
 func (a *Analytics) handleToolCall(ctx context.Context, state *middlewareState, next mcp.MethodHandler, request mcp.Request, started time.Time) (result mcp.Result, err error) {
 	originalRequest := request
-	a.discoverMissingTool(ctx, state, next, request)
 	preparedRequest, name, arguments, ownership, conversation := prepareToolRequest(state, request, a.options.EnableConversationID)
-	intent := a.resolveIntent(ctx, originalRequest, arguments, ownership)
-	missing := a.options.ReportMissing && ownership.virtualMissing
+	probeMissing := false
+	if a.options.ReportMissing && name == a.options.MissingCapabilityToolName {
+		if _, known := state.get(name); !known {
+			probeMissing = true
+			preparedRequest = originalRequest
+		}
+	}
+	intent, intentSource := a.resolveIntent(ctx, originalRequest, arguments, ownership)
+	parameters := buildCapturedToolParameters(name, arguments, ownership)
+	missing := a.options.ReportMissing && ownership.virtualMissing && !probeMissing
 	attribution := a.resolveAttribution(originalRequest, conversation.id)
 	identify := a.resolveIdentity(ctx, originalRequest, &attribution)
 	ctx = withRequestAttribution(ctx, attribution)
 
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			a.emitLifecycle(ctx, lifecycleSnapshot{method: "tools/call", request: originalRequest, started: started, toolName: name, arguments: arguments, intent: intent, conversationID: conversation.id, missing: missing, attribution: attribution, identify: identify, failure: classifyPanic(recovered)})
+			a.emitLifecycle(ctx, lifecycleSnapshot{method: "tools/call", request: originalRequest, started: started, toolName: name, toolDescription: ownership.description, toolCategory: ownership.category, arguments: parameters, intent: intent, intentSource: intentSource, conversationID: conversation.id, missing: missing, attribution: attribution, identify: identify, failure: classifyPanic(recovered)})
 			panic(recovered)
 		}
-		a.emitLifecycle(ctx, lifecycleSnapshot{method: "tools/call", request: originalRequest, result: result, err: err, started: started, toolName: name, arguments: arguments, intent: intent, conversationID: conversation.id, missing: missing, attribution: attribution, identify: identify, failure: classifyToolFailure(result, err)})
+		a.emitLifecycle(ctx, lifecycleSnapshot{method: "tools/call", request: originalRequest, result: result, err: err, started: started, toolName: name, toolDescription: ownership.description, toolCategory: ownership.category, arguments: parameters, intent: intent, intentSource: intentSource, conversationID: conversation.id, missing: missing, attribution: attribution, identify: identify, failure: classifyToolFailure(result, err)})
 	}()
-	if missing {
+	if missing && !probeMissing {
 		return applyConversationResult(missingCapabilityResult(), conversation, ownership), nil
 	}
 	result, err = next(ctx, "tools/call", preparedRequest)
-	if err == nil {
+	if probeMissing && isUnknownToolError(name, result, err) {
+		ownership = parameterOwnership{context: true, virtualMissing: true}
+		parameters = buildCapturedToolParameters(name, arguments, ownership)
+		if contextArgument, ok := arguments["context"].(string); ok {
+			intent, intentSource = contextArgument, "context_parameter"
+		}
+		missing = true
+		state.set(name, ownership)
+		result, err = missingCapabilityResult(), nil
+	}
+	if err == nil && (!probeMissing || missing) {
 		result = applyConversationResult(result, conversation, ownership)
 	}
 	return result, err
 }
 
-func (a *Analytics) resolveIntent(ctx context.Context, request mcp.Request, arguments map[string]any, ownership parameterOwnership) (intent string) {
+func (a *Analytics) resolveIntent(ctx context.Context, request mcp.Request, arguments map[string]any, ownership parameterOwnership) (intent, source string) {
 	if ownership.context {
 		if supplied, ok := arguments["context"].(string); ok {
-			return supplied
+			return supplied, "context_parameter"
 		}
 	}
 	if a.options.IntentFallback == nil {
-		return ""
+		return "", ""
 	}
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			a.safeLog("intent fallback failed", "error", recovered)
 			intent = ""
+			source = ""
 		}
 	}()
-	resolved, err := a.options.IntentFallback(ctx, request)
+	resolved, err := a.options.IntentFallback(ctx, cloneRequestForCallback(request))
 	if err != nil {
 		a.safeLog("intent fallback failed", "error", err)
-		return ""
+		return "", ""
 	}
-	return resolved
+	if resolved == "" {
+		return "", ""
+	}
+	return resolved, "inferred"
+}
+
+func buildCapturedToolParameters(name string, arguments map[string]any, ownership parameterOwnership) map[string]any {
+	params := map[string]any{"name": name}
+	if arguments != nil {
+		cleaned := make(map[string]any, len(arguments))
+		for key, value := range arguments {
+			if (key == "context" && ownership.context) || (key == "conversation_id" && ownership.conversationID) {
+				continue
+			}
+			cleaned[key] = value
+		}
+		params["arguments"] = cleaned
+	}
+	return map[string]any{"request": map[string]any{"method": "tools/call", "params": params}}
+}
+
+func buildCapturedRequestParameters(method string, request mcp.Request) map[string]any {
+	if request == nil {
+		return nil
+	}
+	captured := map[string]any{"method": method}
+	if params := request.GetParams(); params != nil {
+		wire, err := json.Marshal(params)
+		if err == nil {
+			var normalized any
+			if json.Unmarshal(wire, &normalized) == nil {
+				captured["params"] = normalized
+			}
+		}
+	}
+	return map[string]any{"request": captured}
 }
 
 func prepareToolRequest(state *middlewareState, request mcp.Request, conversationsEnabled bool) (mcp.Request, string, map[string]any, parameterOwnership, conversationResolution) {
@@ -218,45 +283,6 @@ func prepareToolRequest(state *middlewareState, request mcp.Request, conversatio
 	clone := *serverRequest
 	clone.Params = &params
 	return &clone, name, arguments, ownership, conversation
-}
-
-func (a *Analytics) discoverMissingTool(ctx context.Context, state *middlewareState, next mcp.MethodHandler, request mcp.Request) {
-	if !a.options.ReportMissing {
-		return
-	}
-	serverRequest, ok := request.(*mcp.ServerRequest[*mcp.CallToolParamsRaw])
-	if !ok || serverRequest.Params == nil || serverRequest.Params.Name != a.options.MissingCapabilityToolName {
-		return
-	}
-	if _, known := state.get(serverRequest.Params.Name); known {
-		return
-	}
-	defer func() {
-		if recovered := recover(); recovered != nil {
-			a.safeLog("missing-capability discovery failed", "error", recovered)
-		}
-	}()
-	listingRequest := &mcp.ServerRequest[*mcp.ListToolsParams]{
-		Session: serverRequest.Session,
-		Params:  &mcp.ListToolsParams{},
-		Extra:   serverRequest.Extra,
-	}
-	result, err := next(ctx, "tools/list", listingRequest)
-	if err != nil {
-		a.safeLog("missing-capability discovery failed", "error", err)
-		return
-	}
-	listing, ok := result.(*mcp.ListToolsResult)
-	if !ok || listing == nil {
-		return
-	}
-	for _, tool := range listing.Tools {
-		if tool != nil && tool.Name == a.options.MissingCapabilityToolName {
-			state.set(tool.Name, parameterOwnership{})
-			return
-		}
-	}
-	state.set(a.options.MissingCapabilityToolName, parameterOwnership{context: true, virtualMissing: true})
 }
 
 func (a *Analytics) safeLog(message string, args ...any) {

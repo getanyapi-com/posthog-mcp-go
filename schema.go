@@ -16,6 +16,8 @@ type parameterOwnership struct {
 	conversationID     bool
 	outputInstructions bool
 	virtualMissing     bool
+	description        string
+	category           string
 }
 
 type middlewareState struct {
@@ -60,7 +62,10 @@ func (a *Analytics) prepareToolsList(state *middlewareState, result mcp.Result) 
 			continue
 		}
 		tool := *original
-		ownership := parameterOwnership{}
+		ownership := parameterOwnership{description: tool.Description}
+		if category, ok := tool.Meta["category"].(string); ok {
+			ownership.category = category
+		}
 		if !a.options.DisableContextInjection {
 			var injected bool
 			tool.InputSchema, injected = injectInputParameter(tool.InputSchema, "context", a.contextDescription(), true)

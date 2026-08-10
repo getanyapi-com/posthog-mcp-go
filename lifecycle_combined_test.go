@@ -3,6 +3,7 @@ package posthogmcp
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -33,19 +34,27 @@ func (client *synchronizedCaptureClient) snapshot() []posthog.Capture {
 
 func TestCombinedLifecycleAttributesIdentityCustomCaptureAndToolException(t *testing.T) {
 	client := &synchronizedCaptureClient{}
+	var metadataCalls atomic.Int32
 	analytics := New(client, &Options{Identify: func(context.Context, mcp.Request) (*Identity, error) {
 		return &Identity{DistinctID: "customer-1", Properties: posthog.Properties{"plan": "free"}}, nil
+	}, EventProperties: func(context.Context, mcp.Request) (posthog.Properties, error) {
+		return posthog.Properties{"metadata_call": metadataCalls.Add(1)}, nil
 	}})
 	server := mcp.NewServer(&mcp.Implementation{Name: "fixture-server", Version: "1.2.3"}, nil)
 	server.AddReceivingMiddleware(analytics.Middleware())
-	mcp.AddTool(server, &mcp.Tool{Name: "fails"}, func(ctx context.Context, _ *mcp.CallToolRequest, _ middlewareInput) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "fails", Description: "Always fails for the fixture.", Meta: mcp.Meta{"category": "Testing"}}, func(ctx context.Context, _ *mcp.CallToolRequest, _ middlewareInput) (*mcp.CallToolResult, any, error) {
 		if err := analytics.Capture(ctx, "inside_tool", map[string]any{"safe": true}); err != nil {
 			t.Fatalf("Capture: %v", err)
 		}
 		return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "fixture failed"}}}, nil, nil
 	})
 	session := connectInMemory(t, server)
-	if _, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: "fails", Arguments: map[string]any{"value": "kept"}}); err != nil {
+	if _, err := session.ListTools(t.Context(), nil); err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	if _, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: "fails", Arguments: map[string]any{
+		"value": "kept", "context": "Verify the failing fixture preserves canonical analytics context without changing the tool result.",
+	}}); err != nil {
 		t.Fatalf("CallTool: %v", err)
 	}
 
@@ -77,9 +86,67 @@ func TestCombinedLifecycleAttributesIdentityCustomCaptureAndToolException(t *tes
 	if tool.Properties[PropertyIsError] != true || tool.Properties[PropertyErrorMessage] != "fixture failed" {
 		t.Fatalf("tool failure = %#v", tool.Properties)
 	}
+	if tool.Properties[PropertyToolDescription] != "Always fails for the fixture." || tool.Properties[PropertyToolCategory] != "Testing" {
+		t.Fatalf("tool metadata = %#v", tool.Properties)
+	}
+	parameters := tool.Properties[PropertyParameters].(map[string]any)
+	request := parameters["request"].(map[string]any)
+	params := request["params"].(map[string]any)
+	arguments := params["arguments"].(map[string]any)
+	if request["method"] != "tools/call" || params["name"] != "fails" || arguments["value"] != "kept" {
+		t.Fatalf("tool parameters = %#v", parameters)
+	}
+	if arguments["context"] != nil {
+		t.Fatalf("wrapper-owned arguments leaked: %#v", arguments)
+	}
 	exception := findCapture(t, captures, EventException)
 	if exception.DistinctId != "customer-1" || exception.Properties[PropertySessionID] != sessionID {
 		t.Fatalf("exception attribution = distinct %q properties %#v", exception.DistinctId, exception.Properties)
+	}
+	if exception.Properties[PropertyToolDescription] != "Always fails for the fixture." || exception.Properties[PropertyToolCategory] != "Testing" {
+		t.Fatalf("exception tool metadata = %#v", exception.Properties)
+	}
+	if metadataCalls.Load() != 4 {
+		t.Fatalf("event properties calls = %d, want one custom plus initialize, tools/list, and one tool lifecycle resolution", metadataCalls.Load())
+	}
+	for _, event := range []posthog.Capture{tool, exception} {
+		if event.Properties["metadata_call"] != tool.Properties["metadata_call"] {
+			t.Fatalf("lifecycle siblings have different metadata: %#v", captures)
+		}
+	}
+	identify := findCapture(t, captures, EventIdentify)
+	if identify.Properties["metadata_call"] != initialize.Properties["metadata_call"] {
+		t.Fatalf("initialize siblings have different metadata: %#v", captures)
+	}
+}
+
+func TestCapturedToolParametersExcludeAllWrapperOwnedFields(t *testing.T) {
+	parameters := buildCapturedToolParameters("fixture", map[string]any{
+		"value": "kept", "context": "owned", "conversation_id": "owned",
+	}, parameterOwnership{context: true, conversationID: true})
+	request := parameters["request"].(map[string]any)
+	params := request["params"].(map[string]any)
+	arguments := params["arguments"].(map[string]any)
+	if len(arguments) != 1 || arguments["value"] != "kept" {
+		t.Fatalf("captured arguments = %#v", arguments)
+	}
+}
+
+func TestIntentFallbackIsCapturedAsInferred(t *testing.T) {
+	client := &synchronizedCaptureClient{}
+	analytics := New(client, &Options{IntentFallback: func(context.Context, mcp.Request) (string, error) {
+		return "Inspect fixture state", nil
+	}})
+	handler := analytics.Middleware()(func(context.Context, string, mcp.Request) (mcp.Result, error) {
+		return &mcp.CallToolResult{}, nil
+	})
+	request := &mcp.ServerRequest[*mcp.CallToolParamsRaw]{Params: &mcp.CallToolParamsRaw{Name: "inspect"}}
+	if _, err := handler(t.Context(), "tools/call", request); err != nil {
+		t.Fatal(err)
+	}
+	capture := findCapture(t, client.snapshot(), EventToolCall)
+	if capture.Properties[PropertyIntent] != "Inspect fixture state" || capture.Properties[PropertyIntentSource] != "inferred" {
+		t.Fatalf("intent properties = %#v", capture.Properties)
 	}
 }
 
@@ -133,6 +200,69 @@ func TestUnsupportedMethodDoesNotConsumeIdentityEmission(t *testing.T) {
 	if countCaptures(client.snapshot(), EventIdentify) != 1 {
 		t.Fatalf("identify count = %d, want 1", countCaptures(client.snapshot(), EventIdentify))
 	}
+}
+
+func TestLifecycleCapturesResourcePromptAndPaginatedToolEvents(t *testing.T) {
+	client := &synchronizedCaptureClient{}
+	analytics := New(client, nil)
+	handler := analytics.Middleware()(func(_ context.Context, method string, _ mcp.Request) (mcp.Result, error) {
+		switch method {
+		case "tools/list":
+			return &mcp.ListToolsResult{NextCursor: "tools-next", Tools: []*mcp.Tool{{Name: "late"}}}, nil
+		case "resources/list":
+			return &mcp.ListResourcesResult{NextCursor: "resources-next"}, nil
+		case "resources/read":
+			return &mcp.ReadResourceResult{}, nil
+		case "prompts/list":
+			return &mcp.ListPromptsResult{NextCursor: "prompts-next"}, nil
+		case "prompts/get":
+			return &mcp.GetPromptResult{}, nil
+		default:
+			return nil, nil
+		}
+	})
+
+	toolsResult, err := handler(t.Context(), "tools/list", &mcp.ServerRequest[*mcp.ListToolsParams]{Params: &mcp.ListToolsParams{Cursor: "tools-page"}})
+	if err != nil || toolsResult.(*mcp.ListToolsResult).NextCursor != "tools-next" {
+		t.Fatalf("tools result = %#v, error = %v", toolsResult, err)
+	}
+	requests := []struct {
+		method  string
+		request mcp.Request
+	}{
+		{"resources/list", &mcp.ServerRequest[*mcp.ListResourcesParams]{Params: &mcp.ListResourcesParams{Cursor: "resources-page"}}},
+		{"resources/read", &mcp.ServerRequest[*mcp.ReadResourceParams]{Params: &mcp.ReadResourceParams{URI: "fixture://resource"}}},
+		{"prompts/list", &mcp.ServerRequest[*mcp.ListPromptsParams]{Params: &mcp.ListPromptsParams{Cursor: "prompts-page"}}},
+		{"prompts/get", &mcp.ServerRequest[*mcp.GetPromptParams]{Params: &mcp.GetPromptParams{Name: "fixture-prompt"}}},
+	}
+	for _, request := range requests {
+		if _, err := handler(t.Context(), request.method, request.request); err != nil {
+			t.Fatalf("%s: %v", request.method, err)
+		}
+	}
+
+	captures := client.snapshot()
+	tools := findCapture(t, captures, EventToolsList)
+	listed := tools.Properties[PropertyListedToolNames].([]any)
+	if len(listed) != 1 || listed[0] != "late" {
+		t.Fatalf("listed tools = %#v", listed)
+	}
+	resource := findCapture(t, captures, EventResourceRead)
+	if resource.Properties[PropertyResourceName] != "fixture://resource" {
+		t.Fatalf("resource properties = %#v", resource.Properties)
+	}
+	resourceParameters := resource.Properties[PropertyParameters].(map[string]any)
+	resourceRequest := resourceParameters["request"].(map[string]any)
+	resourceParams := resourceRequest["params"].(map[string]any)
+	if resourceRequest["method"] != "resources/read" || resourceParams["uri"] != "fixture://resource" {
+		t.Fatalf("resource parameters = %#v", resourceParameters)
+	}
+	prompt := findCapture(t, captures, EventPromptGet)
+	if prompt.Properties[PropertyResourceName] != "fixture-prompt" {
+		t.Fatalf("prompt properties = %#v", prompt.Properties)
+	}
+	findCapture(t, captures, EventResourcesList)
+	findCapture(t, captures, EventPromptsList)
 }
 
 func findCapture(t *testing.T, captures []posthog.Capture, event string) posthog.Capture {

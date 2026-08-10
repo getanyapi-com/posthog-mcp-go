@@ -66,6 +66,59 @@ func TestMiddlewarePreparationPanicCannotFailToolCall(t *testing.T) {
 	}
 }
 
+func TestTypedNilRequestDelegatesExactlyOnce(t *testing.T) {
+	analytics := New(middlewareTestClient{}, nil)
+	var request *mcp.ServerRequest[*mcp.ListResourcesParams]
+	calls := 0
+	want := &mcp.ListResourcesResult{}
+	handler := analytics.Middleware()(func(context.Context, string, mcp.Request) (mcp.Result, error) {
+		calls++
+		return want, nil
+	})
+	result, err := handler(t.Context(), "resources/list", request)
+	if err != nil || result != want || calls != 1 {
+		t.Fatalf("result=%p error=%v calls=%d", result, err, calls)
+	}
+}
+
+func TestHooksCannotMutateDownstreamRequest(t *testing.T) {
+	analytics := New(middlewareTestClient{}, &Options{Identify: func(_ context.Context, request mcp.Request) (*Identity, error) {
+		request.GetParams().(*mcp.ListResourcesParams).Cursor = "mutated"
+		return &Identity{DistinctID: "customer"}, nil
+	}})
+	request := &mcp.ServerRequest[*mcp.ListResourcesParams]{Params: &mcp.ListResourcesParams{Cursor: "original"}}
+	handler := analytics.Middleware()(func(_ context.Context, _ string, request mcp.Request) (mcp.Result, error) {
+		if got := request.GetParams().(*mcp.ListResourcesParams).Cursor; got != "original" {
+			t.Fatalf("downstream cursor = %q", got)
+		}
+		return &mcp.ListResourcesResult{}, nil
+	})
+	if _, err := handler(t.Context(), "resources/list", request); err != nil {
+		t.Fatal(err)
+	}
+	if request.Params.Cursor != "original" {
+		t.Fatalf("caller cursor = %q", request.Params.Cursor)
+	}
+}
+
+func TestMissingCollisionCallsOrdinaryDownstreamOnce(t *testing.T) {
+	analytics := New(middlewareTestClient{}, &Options{ReportMissing: true})
+	calls := 0
+	want := &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "real"}}}
+	handler := analytics.Middleware()(func(_ context.Context, method string, _ mcp.Request) (mcp.Result, error) {
+		calls++
+		if method != "tools/call" {
+			t.Fatalf("unexpected downstream method %q", method)
+		}
+		return want, nil
+	})
+	request := &mcp.ServerRequest[*mcp.CallToolParamsRaw]{Params: &mcp.CallToolParamsRaw{Name: DefaultMissingCapabilityToolName}}
+	result, err := handler(t.Context(), "tools/call", request)
+	if err != nil || result != want || calls != 1 {
+		t.Fatalf("result=%p error=%v calls=%d", result, err, calls)
+	}
+}
+
 func TestMiddlewareDeduplicatesSameAnalyticsAndFansOutDistinctObjects(t *testing.T) {
 	t.Parallel()
 	server := mcp.NewServer(&mcp.Implementation{Name: "test-server", Version: "1.0.0"}, nil)

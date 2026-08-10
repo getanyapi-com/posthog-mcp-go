@@ -124,6 +124,17 @@ func TestAnonymousAttributionOptsOutOfPersonProfiles(t *testing.T) {
 	}
 }
 
+func TestFirstIdentifyLinksPriorAnonymousSession(t *testing.T) {
+	analytics := New(testEnqueueClient{}, &Options{Identify: func(context.Context, mcp.Request) (*Identity, error) {
+		return &Identity{DistinctID: "customer"}, nil
+	}})
+	attribution := requestAttribution{sessionID: "ses_anonymous"}
+	event := analytics.resolveIdentity(context.Background(), nil, &attribution)
+	if event == nil || event.Properties[PropertyAnonDistinctID] != "ses_anonymous" {
+		t.Fatalf("identify event = %#v", event)
+	}
+}
+
 func TestIdentityStateDoesNotRetainNestedHookMutations(t *testing.T) {
 	nested := map[string]any{"role": "member"}
 	returned := &Identity{DistinctID: "user", Properties: posthog.Properties{"profile": nested}}
@@ -155,6 +166,28 @@ func TestIdentityHookCanReturnCyclicPropertiesWithoutBreakingRequest(t *testing.
 	if attribution.identity == nil || attribution.identity.DistinctID != "user" {
 		t.Fatalf("attribution = %#v", attribution)
 	}
+}
+
+func TestIdentitySnapshotsUnknownPointersAndPanickingMarshalers(t *testing.T) {
+	profile := &identityProfile{Name: "before"}
+	call := 0
+	analytics := New(testEnqueueClient{}, &Options{Identify: func(context.Context, mcp.Request) (*Identity, error) {
+		call++
+		if call == 1 {
+			return &Identity{DistinctID: "user", Properties: posthog.Properties{"profile": profile}}, nil
+		}
+		return &Identity{DistinctID: "user", Properties: posthog.Properties{"bad": panickingJSONMarshaler{}}}, nil
+	}})
+	attribution := requestAttribution{sessionID: "ses_fixture"}
+	if analytics.resolveIdentity(context.Background(), nil, &attribution) == nil {
+		t.Fatal("first identity event is nil")
+	}
+	profile.Name = "after"
+	stored := analytics.identityForSession("ses_fixture")
+	if stored.Properties["profile"].(map[string]any)["Name"] != "before" {
+		t.Fatalf("stored profile = %#v", stored.Properties["profile"])
+	}
+	_ = analytics.resolveIdentity(context.Background(), nil, &attribution)
 }
 
 func TestIdentityResolutionThroughRealSDKToolRequest(t *testing.T) {
@@ -208,3 +241,13 @@ func TestIdentityResolutionThroughRealSDKToolRequest(t *testing.T) {
 }
 
 type identityContextKey struct{}
+
+type identityProfile struct {
+	Name string
+}
+
+type panickingJSONMarshaler struct{}
+
+func (panickingJSONMarshaler) MarshalJSON() ([]byte, error) {
+	panic("marshal")
+}
