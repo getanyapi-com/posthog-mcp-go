@@ -81,6 +81,11 @@ func (a *Analytics) emitLifecycle(ctx context.Context, snapshot lifecycleSnapsho
 	if snapshot.err != nil {
 		properties[PropertyErrorMessage] = safeErrorString(snapshot.err)
 	}
+	if snapshot.failure != nil {
+		properties[PropertyIsError] = true
+		properties[PropertyErrorType] = snapshot.failure.errorType
+		properties[PropertyErrorMessage] = snapshot.failure.message
+	}
 	event := Event{Event: eventName, Timestamp: snapshot.started, Properties: properties}
 	snapshot.attribution.applyToEvent(&event)
 	if snapshot.identify != nil {

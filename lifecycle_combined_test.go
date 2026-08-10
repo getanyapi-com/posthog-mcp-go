@@ -176,6 +176,27 @@ func TestCombinedToolPanicIsCapturedAndRepanickedUnchanged(t *testing.T) {
 	findCapture(t, captures, EventException)
 }
 
+func TestNonToolPanicMarksLifecycleEventAsError(t *testing.T) {
+	client := &synchronizedCaptureClient{}
+	analytics := New(client, nil)
+	panicValue := "resource panic"
+	handler := analytics.Middleware()(func(context.Context, string, mcp.Request) (mcp.Result, error) {
+		panic(panicValue)
+	})
+	func() {
+		defer func() {
+			if recovered := recover(); recovered != panicValue {
+				t.Fatalf("panic = %#v", recovered)
+			}
+		}()
+		_, _ = handler(t.Context(), "resources/list", &mcp.ServerRequest[*mcp.ListResourcesParams]{Params: &mcp.ListResourcesParams{}})
+	}()
+	capture := findCapture(t, client.snapshot(), EventResourcesList)
+	if capture.Properties[PropertyIsError] != true || capture.Properties[PropertyErrorType] != "Panic" {
+		t.Fatalf("panic properties = %#v", capture.Properties)
+	}
+}
+
 func TestUnsupportedMethodDoesNotConsumeIdentityEmission(t *testing.T) {
 	client := &synchronizedCaptureClient{}
 	analytics := New(client, &Options{Identify: func(context.Context, mcp.Request) (*Identity, error) {
