@@ -25,7 +25,9 @@ jobs:
           go-version: ${{ matrix.go }}
           cache: true
       - name: Select MCP SDK
-        run: go get github.com/modelcontextprotocol/go-sdk@${{ matrix.mcp }}
+        run: |
+          go get github.com/modelcontextprotocol/go-sdk@${{ matrix.mcp }}
+          go mod tidy
       - name: Vet
         run: go vet ./...
       - name: Test
