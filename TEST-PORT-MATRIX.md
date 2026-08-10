@@ -12,8 +12,8 @@ Statuses are updated as vertical slices land.
 | Upstream test | Disposition |
 | --- | --- |
 | `basic-server` | Port through real Go SDK transports. |
-| `beforeSend` | Port event mutation, drop, error, and panic behavior. |
-| `capture` | Port through public `Analytics.Capture`. |
+| `beforeSend` | Ported through `Analytics.Capture`: mutation, drop, error, and panic. |
+| `capture` | Ported through public `Analytics.Capture`. |
 | `client-identity` | Port request/session client attribution. |
 | `compatibility` | Not applicable: Go targets one public SDK interface. |
 | `concurrent-attribution` | Port under the race detector. |
@@ -34,7 +34,7 @@ Statuses are updated as vertical slices land.
 | `instrument-mutator` | Not applicable: no framework mutator API. |
 | `late-handler-registration` | Port late tool registration. |
 | `lib-identity` | Documented deviation: `$lib` remains `posthog-go`. |
-| `logger-isolation` | Port panicking logger behavior. |
+| `logger-isolation` | Ported with a panicking `slog.Handler`. |
 | `mcp-payloads` | Port sanitization fixtures. |
 | `mcp-version-compatibility` | Port dependency-version CI matrix. |
 | `output-instructions` | Port conversation result behavior. |
@@ -42,17 +42,17 @@ Statuses are updated as vertical slices land.
 | `posthog-mcp` | Not applicable: no manual dispatcher in v0. |
 | `report-missing` | Port opt-in virtual tool behavior. |
 | `reserved-arguments` | Port ownership and stripping behavior. |
-| `sanitization` | Port literal pure fixtures through public capture. |
+| `sanitization` | Ported literal privacy vectors through public capture. |
 | `sdk-import-boundary` | Port as a compile/import test. |
 | `session-id` | Port deterministic and rollover behavior. |
 | `session-token` | Explicit deviation: no Go SDK response-header seam. |
-| `sink` | Port enqueue error and panic behavior. |
+| `sink` | Ported enqueue error and panic behavior through public capture. |
 | `stateless-session` | Covered by opt-in conversation IDs. |
 | `string-method-registration` | Not applicable to typed Go registration. |
 | `tool-categories` | Port `_meta.category` capture. |
 | `tracing-initialization` | Port initialize timing and metadata. |
 | `transport-identity` | Port HTTP headers through Streamable HTTP. |
-| `truncation` | Port limits and progressive event reduction. |
+| `truncation` | Ported field, recursive, and total-event limits through public capture. |
 
 ## Python
 
@@ -64,9 +64,9 @@ Statuses are updated as vertical slices land.
 | `test_instrumentation_fork` | Not applicable: Go owns no analytics worker/task pool. |
 | `test_lowlevel` | Covered through real Go SDK middleware tests. |
 | `test_pending_tasks` | Not applicable: no wrapper-owned background tasks. |
-| `test_pipeline` | Port canonical event, ID, privacy, and pipeline fixtures. |
+| `test_pipeline` | Privacy and custom pipeline fixtures ported; canonical automatic events and IDs remain in their owning slices. |
 | `test_posthog_mcp` | Not applicable: no manual dispatcher in v0. |
 | `test_review_fixes` | Review each regression and port applicable public behavior. |
 | `test_session_token` | Explicit deviation: no Go SDK response-header seam. |
-| `test_truncation` | Port literal limits and total-budget behavior. |
+| `test_truncation` | Ported literal limits and total-budget behavior. |
 | `test_units` | Port behavior reachable through the public API. |
