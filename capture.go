@@ -112,76 +112,110 @@ func eventPropertiesFromContext(ctx context.Context) (posthog.Properties, bool) 
 }
 
 func snapshotHookEvent(event Event) (snapshot Event, ok bool) {
+	defer func() {
+		if recover() != nil {
+			snapshot, ok = Event{}, false
+		}
+	}()
 	snapshot = event
-	snapshot.Properties = cloneHookProperties(event.Properties)
-	snapshot.Groups = cloneHookGroups(event.Groups)
+	cloner := hookValueCloner{seen: make(map[string]bool)}
+	properties, ok := cloner.cloneMap(map[string]any(event.Properties))
+	if !ok {
+		return Event{}, false
+	}
+	groups, ok := cloner.cloneMap(map[string]any(event.Groups))
+	if !ok {
+		return Event{}, false
+	}
+	snapshot.Properties = posthog.Properties(properties)
+	snapshot.Groups = posthog.Groups(groups)
 	return snapshot, true
 }
 
-func cloneHookProperties(source posthog.Properties) posthog.Properties {
-	if source == nil {
-		return nil
-	}
-	clone := make(posthog.Properties, len(source))
-	for key, value := range source {
-		clone[key] = cloneHookValue(value)
-	}
-	return clone
+type hookValueCloner struct {
+	seen map[string]bool
 }
 
-func cloneHookGroups(source posthog.Groups) posthog.Groups {
-	if source == nil {
-		return nil
-	}
-	clone := make(posthog.Groups, len(source))
-	for key, value := range source {
-		clone[key] = cloneHookValue(value)
-	}
-	return clone
-}
-
-func cloneHookValue(value any) any {
+func (cloner hookValueCloner) clone(value any) (any, bool) {
 	switch value := value.(type) {
 	case nil, bool, string,
 		int, int8, int16, int32, int64,
 		uint, uint8, uint16, uint32, uint64,
 		float32, float64, json.Number, time.Time:
-		return value
+		return value, true
 	case map[string]any:
-		clone := make(map[string]any, len(value))
-		for key, nested := range value {
-			clone[key] = cloneHookValue(nested)
-		}
-		return clone
+		return cloner.cloneMap(value)
+	case posthog.Properties:
+		return cloner.cloneMap(map[string]any(value))
+	case posthog.Groups:
+		return cloner.cloneMap(map[string]any(value))
 	case []any:
-		clone := make([]any, len(value))
-		for index, nested := range value {
-			clone[index] = cloneHookValue(nested)
-		}
-		return clone
+		return cloner.cloneSlice(value)
 	case []string:
-		return append([]string(nil), value...)
+		return append([]string(nil), value...), true
 	default:
 		return cloneHookJSONValue(value)
 	}
 }
 
-func cloneHookJSONValue(value any) (cloned any) {
+func (cloner hookValueCloner) cloneMap(source map[string]any) (map[string]any, bool) {
+	if source == nil {
+		return nil, true
+	}
+	key := referenceKey("hook-map", source)
+	if cloner.seen[key] {
+		return nil, false
+	}
+	cloner.seen[key] = true
+	defer delete(cloner.seen, key)
+	clone := make(map[string]any, len(source))
+	for key, value := range source {
+		cloned, ok := cloner.clone(value)
+		if !ok {
+			return nil, false
+		}
+		clone[key] = cloned
+	}
+	return clone, true
+}
+
+func (cloner hookValueCloner) cloneSlice(source []any) ([]any, bool) {
+	if source == nil {
+		return nil, true
+	}
+	key := referenceKey("hook-slice", source)
+	if cloner.seen[key] {
+		return nil, false
+	}
+	cloner.seen[key] = true
+	defer delete(cloner.seen, key)
+	clone := make([]any, len(source))
+	for index, value := range source {
+		cloned, ok := cloner.clone(value)
+		if !ok {
+			return nil, false
+		}
+		clone[index] = cloned
+	}
+	return clone, true
+}
+
+func cloneHookJSONValue(value any) (cloned any, ok bool) {
 	defer func() {
 		if recover() != nil {
-			cloned = "[unavailable]"
+			cloned, ok = nil, false
 		}
 	}()
 	wire, err := json.Marshal(value)
 	if err != nil {
-		return "[unavailable]"
+		return nil, false
 	}
 	decoder := json.NewDecoder(strings.NewReader(string(wire)))
 	decoder.UseNumber()
 	if decoder.Decode(&cloned) != nil {
-		return "[unavailable]"
+		return nil, false
 	}
-	return cloned
+	return cloned, true
 }
 
 func (a *Analytics) resolveEventProperties(ctx context.Context, request mcp.Request) (properties posthog.Properties) {

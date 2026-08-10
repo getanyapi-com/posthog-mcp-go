@@ -128,6 +128,40 @@ func TestBeforeSendMutationIsFinalWireValue(t *testing.T) {
 	}
 }
 
+func TestBeforeSendCyclicMutationDropsOnlyAnalytics(t *testing.T) {
+	client := &recordingClient{}
+	analytics := posthogmcp.New(client, &posthogmcp.Options{BeforeSend: func(_ context.Context, event posthogmcp.Event) (*posthogmcp.Event, error) {
+		cycle := map[string]any{}
+		cycle["self"] = cycle
+		event.Properties["cycle"] = cycle
+		return &event, nil
+	}})
+	if err := analytics.Capture(context.Background(), "cyclic_hook", nil); err != nil {
+		t.Fatalf("Capture: %v", err)
+	}
+	if len(client.messages) != 0 {
+		t.Fatalf("captured messages = %d, want malformed hook event dropped", len(client.messages))
+	}
+}
+
+func TestBeforeSendDeepMutationRemainsFinalWireValue(t *testing.T) {
+	client := &recordingClient{}
+	analytics := posthogmcp.New(client, &posthogmcp.Options{BeforeSend: func(_ context.Context, event posthogmcp.Event) (*posthogmcp.Event, error) {
+		deep := map[string]any{"leaf": "kept"}
+		for range 12 {
+			deep = map[string]any{"next": deep}
+		}
+		event.Properties["deep"] = deep
+		return &event, nil
+	}})
+	if err := analytics.Capture(context.Background(), "deep_hook", nil); err != nil {
+		t.Fatalf("Capture: %v", err)
+	}
+	if len(client.messages) != 1 {
+		t.Fatalf("captured messages = %d, want trusted deep hook output preserved", len(client.messages))
+	}
+}
+
 func TestCaptureDropsHookFailuresAndDroppedEvents(t *testing.T) {
 	tests := []struct {
 		name string

@@ -2,11 +2,14 @@ package posthogmcp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync/atomic"
 	"testing"
 
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -116,6 +119,45 @@ func TestMissingCollisionCallsOrdinaryDownstreamOnce(t *testing.T) {
 	result, err := handler(t.Context(), "tools/call", request)
 	if err != nil || result != want || calls != 1 {
 		t.Fatalf("result=%p error=%v calls=%d", result, err, calls)
+	}
+}
+
+func TestMissingCollisionPreservesMisleadingDownstreamError(t *testing.T) {
+	analytics := New(middlewareTestClient{}, &Options{ReportMissing: true})
+	wantErr := errors.New(`backend failed: unknown tool "get_more_tools" while proxying`)
+	calls := 0
+	handler := analytics.Middleware()(func(context.Context, string, mcp.Request) (mcp.Result, error) {
+		calls++
+		return nil, wantErr
+	})
+	request := &mcp.ServerRequest[*mcp.CallToolParamsRaw]{Params: &mcp.CallToolParamsRaw{Name: DefaultMissingCapabilityToolName}}
+	result, err := handler(t.Context(), "tools/call", request)
+	if result != nil || err != wantErr || calls != 1 {
+		t.Fatalf("result=%#v error=%v calls=%d", result, err, calls)
+	}
+}
+
+func TestMissingCollisionPreservesNonCanonicalJSONRPCErrors(t *testing.T) {
+	canonical := &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: `unknown tool "get_more_tools"`}
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "wrapped", err: fmt.Errorf("proxy: %w", canonical)},
+		{name: "data", err: &jsonrpc.Error{Code: canonical.Code, Message: canonical.Message, Data: json.RawMessage(`{"source":"proxy"}`)}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			analytics := New(middlewareTestClient{}, &Options{ReportMissing: true})
+			handler := analytics.Middleware()(func(context.Context, string, mcp.Request) (mcp.Result, error) {
+				return nil, test.err
+			})
+			request := &mcp.ServerRequest[*mcp.CallToolParamsRaw]{Params: &mcp.CallToolParamsRaw{Name: DefaultMissingCapabilityToolName}}
+			result, err := handler(t.Context(), "tools/call", request)
+			if result != nil || err != test.err {
+				t.Fatalf("result=%#v error=%v, want original %v", result, err, test.err)
+			}
+		})
 	}
 }
 

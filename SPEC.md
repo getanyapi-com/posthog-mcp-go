@@ -114,6 +114,10 @@ after receiving middleware returns. Therefore the canonical discovery event has
 client and protocol attribution immediately; applications that require server
 name/version on that event supply them through `EventProperties`.
 
+Callbacks receive a mutable clone of known request types. For public request
+types introduced after the minimum supported SDK, callbacks receive a non-nil,
+metadata-only server request rather than the original mutable request.
+
 For ordinary requests, downstream is called exactly once and its result and
 error are preserved. Wrapper-owned changes are limited to enabled features:
 
@@ -121,6 +125,11 @@ error are preserved. Wrapper-owned changes are limited to enabled features:
 - only analytics-owned arguments are stripped before typed validation;
 - conversation instructions may be added to cloned tool results;
 - the virtual missing-capability tool is handled by the wrapper.
+
+The virtual missing-capability name is always delegated once so a real tool
+registered later can take ownership. The wrapper substitutes its virtual result
+only for the SDK's direct, data-free `InvalidParams` unknown-tool error; wrapped,
+data-bearing, or textually similar errors remain unchanged.
 
 If a schema cannot safely be extended, the original schema is returned and no
 ownership is recorded. Existing customer fields named `context`,

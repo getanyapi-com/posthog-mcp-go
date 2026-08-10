@@ -35,10 +35,15 @@ func (client *synchronizedCaptureClient) snapshot() []posthog.Capture {
 func TestCombinedLifecycleAttributesIdentityCustomCaptureAndToolException(t *testing.T) {
 	client := &synchronizedCaptureClient{}
 	var metadataCalls atomic.Int32
+	var nilMetadataRequests atomic.Int32
 	analytics := New(client, &Options{Identify: func(context.Context, mcp.Request) (*Identity, error) {
 		return &Identity{DistinctID: "customer-1", Properties: posthog.Properties{"plan": "free"}}, nil
-	}, EventProperties: func(context.Context, mcp.Request) (posthog.Properties, error) {
-		return posthog.Properties{"metadata_call": metadataCalls.Add(1)}, nil
+	}, EventProperties: func(_ context.Context, request mcp.Request) (posthog.Properties, error) {
+		call := metadataCalls.Add(1)
+		if call == 1 && request == nil {
+			nilMetadataRequests.Add(1)
+		}
+		return posthog.Properties{"metadata_call": call}, nil
 	}})
 	server := mcp.NewServer(&mcp.Implementation{Name: "fixture-server", Version: "1.2.3"}, nil)
 	server.AddReceivingMiddleware(analytics.Middleware())
@@ -108,6 +113,9 @@ func TestCombinedLifecycleAttributesIdentityCustomCaptureAndToolException(t *tes
 	}
 	if metadataCalls.Load() != 4 {
 		t.Fatalf("event properties calls = %d, want one custom plus initialize, tools/list, and one tool lifecycle resolution", metadataCalls.Load())
+	}
+	if nilMetadataRequests.Load() != 0 {
+		t.Fatalf("event properties received %d nil requests", nilMetadataRequests.Load())
 	}
 	for _, event := range []posthog.Capture{tool, exception} {
 		if event.Properties["metadata_call"] != tool.Properties["metadata_call"] {

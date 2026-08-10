@@ -157,50 +157,6 @@ func lifecycleEventName(method string, missing bool) string {
 	}[method]
 }
 
-func (a *Analytics) handleToolCall(ctx context.Context, state *middlewareState, next mcp.MethodHandler, request mcp.Request, started time.Time) (result mcp.Result, err error) {
-	originalRequest := request
-	preparedRequest, name, arguments, ownership, conversation := prepareToolRequest(state, request, a.options.EnableConversationID)
-	probeMissing := false
-	if a.options.ReportMissing && name == a.options.MissingCapabilityToolName {
-		if _, known := state.get(name); !known {
-			probeMissing = true
-			preparedRequest = originalRequest
-		}
-	}
-	intent, intentSource := a.resolveIntent(ctx, originalRequest, arguments, ownership)
-	parameters := buildCapturedToolParameters(name, arguments, ownership)
-	missing := a.options.ReportMissing && ownership.virtualMissing && !probeMissing
-	attribution := a.resolveAttribution(originalRequest, conversation.id)
-	identify := a.resolveIdentity(ctx, originalRequest, &attribution)
-	ctx = withRequestAttribution(ctx, attribution)
-
-	defer func() {
-		if recovered := recover(); recovered != nil {
-			a.emitLifecycle(ctx, lifecycleSnapshot{method: "tools/call", request: originalRequest, started: started, toolName: name, toolDescription: ownership.description, toolCategory: ownership.category, arguments: parameters, intent: intent, intentSource: intentSource, conversationID: conversation.id, missing: missing, attribution: attribution, identify: identify, failure: classifyPanic(recovered)})
-			panic(recovered)
-		}
-		a.emitLifecycle(ctx, lifecycleSnapshot{method: "tools/call", request: originalRequest, result: result, err: err, started: started, toolName: name, toolDescription: ownership.description, toolCategory: ownership.category, arguments: parameters, intent: intent, intentSource: intentSource, conversationID: conversation.id, missing: missing, attribution: attribution, identify: identify, failure: classifyToolFailure(result, err)})
-	}()
-	if missing && !probeMissing {
-		return applyConversationResult(missingCapabilityResult(), conversation, ownership), nil
-	}
-	result, err = next(ctx, "tools/call", preparedRequest)
-	if probeMissing && isUnknownToolError(name, result, err) {
-		ownership = parameterOwnership{context: true, virtualMissing: true}
-		parameters = buildCapturedToolParameters(name, arguments, ownership)
-		if contextArgument, ok := arguments["context"].(string); ok {
-			intent, intentSource = contextArgument, "context_parameter"
-		}
-		missing = true
-		state.set(name, ownership)
-		result, err = missingCapabilityResult(), nil
-	}
-	if err == nil && (!probeMissing || missing) {
-		result = applyConversationResult(result, conversation, ownership)
-	}
-	return result, err
-}
-
 func (a *Analytics) resolveIntent(ctx context.Context, request mcp.Request, arguments map[string]any, ownership parameterOwnership) (intent, source string) {
 	if ownership.context {
 		if supplied, ok := arguments["context"].(string); ok {

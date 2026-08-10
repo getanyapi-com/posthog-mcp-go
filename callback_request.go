@@ -28,7 +28,23 @@ func cloneRequestForCallback(request mcp.Request) (cloned mcp.Request) {
 	case *mcp.ServerRequest[*mcp.GetPromptParams]:
 		return cloneServerRequest(request, &mcp.GetPromptParams{})
 	default:
+		return cloneUnknownRequestMetadata(request)
+	}
+}
+
+func cloneUnknownRequestMetadata(request mcp.Request) mcp.Request {
+	if request == nil {
 		return nil
+	}
+	params := &mcp.ListToolsParams{}
+	if source := request.GetParams(); source != nil {
+		params.SetMeta(cloneJSONMap(source.GetMeta()))
+	}
+	session, _ := request.GetSession().(*mcp.ServerSession)
+	return &mcp.ServerRequest[*mcp.ListToolsParams]{
+		Session: session,
+		Params:  params,
+		Extra:   cloneRequestExtra(request.GetExtra()),
 	}
 }
 

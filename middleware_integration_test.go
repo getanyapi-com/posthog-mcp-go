@@ -19,52 +19,6 @@ type middlewareInput struct {
 	Value string `json:"value"`
 }
 
-func TestMiddlewareHandlesMissingCapabilityWithoutPriorListing(t *testing.T) {
-	t.Parallel()
-	server := mcp.NewServer(&mcp.Implementation{Name: "test-server", Version: "1.0.0"}, nil)
-	analytics := New(middlewareTestClient{}, &Options{ReportMissing: true, EnableConversationID: true})
-	server.AddReceivingMiddleware(analytics.Middleware())
-	clientSession := connectInMemory(t, server)
-
-	result, err := clientSession.CallTool(t.Context(), &mcp.CallToolParams{
-		Name:      DefaultMissingCapabilityToolName,
-		Arguments: map[string]any{"context": "Need a database query tool for SQL operations."},
-	})
-	if err != nil {
-		t.Fatalf("CallTool: %v", err)
-	}
-	text, ok := result.Content[0].(*mcp.TextContent)
-	if !ok || !strings.Contains(text.Text, "noted your feedback") {
-		t.Fatalf("result = %#v", result)
-	}
-	if len(result.Content) != 1 {
-		t.Fatalf("unadvertised conversation handle was returned: %#v", result.Content)
-	}
-}
-
-func TestMiddlewareDoesNotInterceptCollidingRealMissingTool(t *testing.T) {
-	t.Parallel()
-	server := mcp.NewServer(&mcp.Implementation{Name: "test-server", Version: "1.0.0"}, nil)
-	analytics := New(middlewareTestClient{}, &Options{ReportMissing: true})
-	server.AddReceivingMiddleware(analytics.Middleware())
-	mcp.AddTool(server, &mcp.Tool{Name: DefaultMissingCapabilityToolName}, func(_ context.Context, _ *mcp.CallToolRequest, input middlewareInput) (*mcp.CallToolResult, any, error) {
-		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "real: " + input.Value}}}, nil, nil
-	})
-	clientSession := connectInMemory(t, server)
-
-	result, err := clientSession.CallTool(t.Context(), &mcp.CallToolParams{
-		Name:      DefaultMissingCapabilityToolName,
-		Arguments: map[string]any{"value": "kept"},
-	})
-	if err != nil {
-		t.Fatalf("CallTool: %v", err)
-	}
-	text := result.Content[0].(*mcp.TextContent)
-	if text.Text != "real: kept" {
-		t.Fatalf("text = %q", text.Text)
-	}
-}
-
 type structuredOutput struct {
 	Value string `json:"value"`
 }

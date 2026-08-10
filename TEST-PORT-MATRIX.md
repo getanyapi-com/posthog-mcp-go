@@ -32,7 +32,7 @@ Statuses are updated as vertical slices land.
 | `ids` | Ported UUIDv7 shape and literal deterministic TypeScript vectors. |
 | `instrument-lowlevel` | Covered through `mcp.Middleware`. |
 | `instrument-mutator` | Not applicable: no framework mutator API. |
-| `late-handler-registration` | Ported by registering tools after central middleware attachment. |
+| `late-handler-registration` | Ported by registering tools after central middleware attachment and after a virtual same-name tool was listed and called. |
 | `lib-identity` | Documented deviation: `$lib` remains `posthog-go`. |
 | `logger-isolation` | Ported with a panicking `slog.Handler`. |
 | `mcp-payloads` | Ported exact request envelopes, owned-field exclusion, and sanitization fixtures. |
@@ -40,7 +40,7 @@ Statuses are updated as vertical slices land.
 | `output-instructions` | Ported conversation text and structured result behavior. |
 | `posthog-events` | Ported canonical lifecycle, identify, exception, attribution, and envelope fixtures. |
 | `posthog-mcp` | Not applicable: no manual dispatcher in v0. |
-| `report-missing` | Ported opt-in virtual tool, direct-call, and real-name collision behavior. |
+| `report-missing` | Ported opt-in virtual tool, direct-call, exact SDK error recognition, and real-name collision behavior. |
 | `reserved-arguments` | Ported ownership, customer-field preservation, and stripping behavior. |
 | `sanitization` | Ported literal privacy vectors through public capture. |
 | `sdk-import-boundary` | Ported through the external-package public API test. |
