@@ -4,15 +4,17 @@ package posthogmcp
 // Copyright (c) 2025 AgentCat, Inc. Licensed under the MIT License.
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"net/url"
-	"reflect"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/posthog/posthog-go"
 )
 
 const (
@@ -31,182 +33,140 @@ var (
 	dataPayload      = regexp.MustCompile(`^[A-Za-z0-9+/_-]+={0,2}$`)
 	posthogToken     = regexp.MustCompile(`\bph[a-z]_[A-Za-z0-9_-]{20,}\b`)
 	sensitiveKey     = regexp.MustCompile(`(?i)^(authorization|cookie|set-cookie|x-api-key|api[-_]?key|api[-_]?token|access[-_]?token|refresh[-_]?token|token|password|secret|client[-_]?secret|private[-_]?key)$`)
-	timeType         = reflect.TypeOf(time.Time{})
-	errorType        = reflect.TypeOf((*error)(nil)).Elem()
 )
 
-type visitIdentity struct {
-	kind reflect.Kind
-	ptr  uintptr
+type valueSanitizer struct {
+	seen map[string]bool
 }
 
 func sanitizeValue(value any, depth int) any {
-	return valueSanitizer{seen: make(map[visitIdentity]bool)}.visit(reflect.ValueOf(value), depth)
+	return valueSanitizer{seen: make(map[string]bool)}.visit(value, depth)
 }
 
-type valueSanitizer struct {
-	seen map[visitIdentity]bool
-}
-
-func (s valueSanitizer) visit(value reflect.Value, depth int) any {
-	if !value.IsValid() {
+func (sanitizer valueSanitizer) visit(value any, depth int) any {
+	switch value := value.(type) {
+	case nil:
 		return nil
-	}
-	if value.Kind() == reflect.Interface {
-		if value.IsNil() {
-			return nil
+	case bool:
+		return value
+	case string:
+		return truncateUTF8(sanitizeString(value), maxStringBytes)
+	case time.Time:
+		return value.Format(time.RFC3339Nano)
+	case error:
+		return truncateUTF8(safeString(value), maxStringBytes)
+	case []byte:
+		return binaryRedaction
+	case float64:
+		return normalizeFloat(value)
+	case float32:
+		return normalizeFloat(float64(value))
+	case int, int8, int16, int32, int64:
+		return value
+	case uint, uint8, uint16, uint32, uint64:
+		return value
+	case json.Number:
+		return value
+	case map[string]any:
+		return sanitizer.visitMap(value, depth)
+	case posthog.Properties:
+		return sanitizer.visitMap(map[string]any(value), depth)
+	case posthog.Groups:
+		return sanitizer.visitMap(map[string]any(value), depth)
+	case []any:
+		return sanitizer.visitSlice(value, depth)
+	case []string:
+		items := make([]any, len(value))
+		for index := range value {
+			items[index] = value[index]
 		}
-		return s.visit(value.Elem(), depth)
-	}
-	if value.Type() == timeType {
-		return value.Interface().(time.Time).Format(time.RFC3339Nano)
-	}
-	if value.Type().Implements(errorType) {
-		return safeString(value.Interface())
-	}
-	switch value.Kind() {
-	case reflect.Bool:
-		return value.Interface()
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return value.Interface()
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		return value.Interface()
-	case reflect.Float32, reflect.Float64:
-		if normalized := normalizeFloat(value.Float()); normalized != value.Float() {
-			return normalized
-		}
-		return value.Interface()
-	case reflect.String:
-		return truncateUTF8(sanitizeString(value.String()), maxStringBytes)
-	case reflect.Map:
-		return s.visitMap(value, depth)
-	case reflect.Slice:
-		if value.Type().Elem().Kind() == reflect.Uint8 {
-			return binaryRedaction
-		}
-		return s.visitSlice(value, depth)
-	case reflect.Array:
-		return s.visitArray(value, depth)
-	case reflect.Pointer:
-		if value.IsNil() {
-			return nil
-		}
-		if depth <= 0 {
-			return "[Object]"
-		}
-		return s.visitReference(value, depth, func() any { return s.visit(value.Elem(), depth-1) })
-	case reflect.Struct:
-		return s.visitStruct(value, depth)
-	case reflect.Invalid:
-		return nil
+		return sanitizer.visitSlice(items, depth)
 	default:
-		if value.CanInterface() {
-			return truncateUTF8(safeString(value.Interface()), maxStringBytes)
-		}
-		return "[unavailable]"
+		return sanitizer.visitJSONValue(value, depth)
 	}
 }
 
-func (s valueSanitizer) visitMap(value reflect.Value, depth int) any {
-	if value.IsNil() {
+func (sanitizer valueSanitizer) visitMap(value map[string]any, depth int) any {
+	if value == nil {
 		return nil
 	}
 	if depth <= 0 {
 		return "[Object]"
 	}
-	return s.visitReference(value, depth, func() any {
-		entries := make([]struct {
-			key string
-			val reflect.Value
-		}, 0, value.Len())
-		iter := value.MapRange()
-		for iter.Next() {
-			entries = append(entries, struct {
-				key string
-				val reflect.Value
-			}{safeString(iter.Key().Interface()), iter.Value()})
+	key := referenceKey("map", value)
+	return sanitizer.visitReference(key, func() any {
+		keys := make([]string, 0, len(value))
+		for key := range value {
+			keys = append(keys, key)
 		}
-		sort.SliceStable(entries, func(i, j int) bool { return entries[i].key < entries[j].key })
-		result := make(map[string]any, min(len(entries), maxBreadth)+1)
-		for index, entry := range entries {
+		sort.Strings(keys)
+		result := make(map[string]any, min(len(keys), maxBreadth)+1)
+		for index, key := range keys {
 			if index == maxBreadth {
 				result["..."] = "[MaxProperties ~]"
 				break
 			}
-			if sensitiveKey.MatchString(entry.key) {
-				result[entry.key] = redactedValue
+			if sensitiveKey.MatchString(key) {
+				result[key] = redactedValue
 			} else {
-				result[entry.key] = s.visit(entry.val, depth-1)
+				result[key] = sanitizer.visit(value[key], depth-1)
 			}
 		}
 		return sanitizeResponseContent(result)
 	})
 }
 
-func (s valueSanitizer) visitSlice(value reflect.Value, depth int) any {
-	if value.IsNil() {
+func (sanitizer valueSanitizer) visitSlice(value []any, depth int) any {
+	if value == nil {
 		return nil
 	}
 	if depth <= 0 {
 		return "[Array]"
 	}
-	return s.visitReference(value, depth, func() any { return s.visitIndexed(value, depth) })
+	key := referenceKey("slice", value)
+	return sanitizer.visitReference(key, func() any {
+		limit := min(len(value), maxBreadth)
+		result := make([]any, 0, limit+1)
+		for index := 0; index < limit; index++ {
+			result = append(result, sanitizer.visit(value[index], depth-1))
+		}
+		if len(value) > maxBreadth {
+			result = append(result, "[MaxProperties ~]")
+		}
+		return result
+	})
 }
 
-func (s valueSanitizer) visitArray(value reflect.Value, depth int) any {
-	if depth <= 0 {
-		return "[Array]"
+func (sanitizer valueSanitizer) visitJSONValue(value any, depth int) (result any) {
+	defer func() {
+		if recover() != nil {
+			result = "[unavailable]"
+		}
+	}()
+	wire, err := json.Marshal(value)
+	if err != nil {
+		return truncateUTF8(sanitizeString(safeString(value)), maxStringBytes)
 	}
-	return s.visitIndexed(value, depth)
+	var normalized any
+	decoder := json.NewDecoder(strings.NewReader(string(wire)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&normalized); err != nil {
+		return "[unavailable]"
+	}
+	return sanitizer.visit(normalized, depth)
 }
 
-func (s valueSanitizer) visitIndexed(value reflect.Value, depth int) any {
-	limit := min(value.Len(), maxBreadth)
-	result := make([]any, 0, limit+1)
-	for index := 0; index < limit; index++ {
-		result = append(result, s.visit(value.Index(index), depth-1))
-	}
-	if value.Len() > maxBreadth {
-		result = append(result, "[MaxProperties ~]")
-	}
-	return result
-}
-
-func (s valueSanitizer) visitStruct(value reflect.Value, depth int) any {
-	if depth <= 0 {
-		return "[Object]"
-	}
-	result := make(map[string]any)
-	typeOf := value.Type()
-	for index := 0; index < value.NumField() && len(result) < maxBreadth; index++ {
-		field := typeOf.Field(index)
-		if !field.IsExported() {
-			continue
-		}
-		name := strings.Split(field.Tag.Get("json"), ",")[0]
-		if name == "-" {
-			continue
-		}
-		if name == "" {
-			name = field.Name
-		}
-		if sensitiveKey.MatchString(name) {
-			result[name] = redactedValue
-		} else {
-			result[name] = s.visit(value.Field(index), depth-1)
-		}
-	}
-	return sanitizeResponseContent(result)
-}
-
-func (s valueSanitizer) visitReference(value reflect.Value, _ int, visit func() any) any {
-	identity := visitIdentity{kind: value.Kind(), ptr: value.Pointer()}
-	if s.seen[identity] {
+func (sanitizer valueSanitizer) visitReference(key string, visit func() any) any {
+	if sanitizer.seen[key] {
 		return "[Circular ~]"
 	}
-	s.seen[identity] = true
-	defer delete(s.seen, identity)
+	sanitizer.seen[key] = true
+	defer delete(sanitizer.seen, key)
 	return visit()
+}
+
+func referenceKey(kind string, value any) string {
+	return fmt.Sprintf("%s:%p", kind, value)
 }
 
 func normalizeFloat(value float64) any {

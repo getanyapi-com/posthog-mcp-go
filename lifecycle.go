@@ -3,7 +3,6 @@ package posthogmcp
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -20,6 +19,9 @@ type lifecycleSnapshot struct {
 	intent         string
 	conversationID string
 	missing        bool
+	attribution    requestAttribution
+	identify       *Event
+	failure        *toolFailure
 }
 
 type automaticEventCapturer interface {
@@ -62,9 +64,24 @@ func (a *Analytics) emitLifecycle(ctx context.Context, snapshot lifecycleSnapsho
 		properties[PropertyResponse] = snapshot.result
 	}
 	if snapshot.err != nil {
-		properties[PropertyErrorMessage] = snapshot.err.Error()
+		properties[PropertyErrorMessage] = safeErrorString(snapshot.err)
 	}
-	capturer.captureEvent(ctx, Event{Event: eventName, Timestamp: snapshot.started, Properties: properties}, snapshot.request)
+	event := Event{Event: eventName, Timestamp: snapshot.started, Properties: properties}
+	snapshot.attribution.applyToEvent(&event)
+	if snapshot.identify != nil {
+		identify := *snapshot.identify
+		snapshot.attribution.applyToEvent(&identify)
+		capturer.captureEvent(withRequestAttribution(ctx, snapshot.attribution), identify, snapshot.request)
+	}
+	var exception *Event
+	if snapshot.method == "tools/call" {
+		exception = applyToolFailure(&event, snapshot.failure)
+	}
+	attributedContext := withRequestAttribution(ctx, snapshot.attribution)
+	capturer.captureEvent(attributedContext, event, snapshot.request)
+	if exception != nil && !a.options.DisableExceptionAutocapture {
+		capturer.captureEvent(attributedContext, *exception, snapshot.request)
+	}
 }
 
 func addLifecycleProperties(properties map[string]any, snapshot lifecycleSnapshot) {
@@ -128,13 +145,16 @@ func (a *Analytics) handleToolCall(ctx context.Context, state *middlewareState, 
 	preparedRequest, name, arguments, ownership, conversation := prepareToolRequest(state, request, a.options.EnableConversationID)
 	intent := a.resolveIntent(ctx, originalRequest, arguments, ownership)
 	missing := a.options.ReportMissing && ownership.virtualMissing
+	attribution := a.resolveAttribution(originalRequest, conversation.id)
+	identify := a.resolveIdentity(ctx, originalRequest, &attribution)
+	ctx = withRequestAttribution(ctx, attribution)
 
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			a.emitLifecycle(ctx, lifecycleSnapshot{method: "tools/call", request: originalRequest, err: fmt.Errorf("panic: %v", recovered), started: started, toolName: name, arguments: arguments, intent: intent, conversationID: conversation.id, missing: missing})
+			a.emitLifecycle(ctx, lifecycleSnapshot{method: "tools/call", request: originalRequest, started: started, toolName: name, arguments: arguments, intent: intent, conversationID: conversation.id, missing: missing, attribution: attribution, identify: identify, failure: classifyPanic(recovered)})
 			panic(recovered)
 		}
-		a.emitLifecycle(ctx, lifecycleSnapshot{method: "tools/call", request: originalRequest, result: result, err: err, started: started, toolName: name, arguments: arguments, intent: intent, conversationID: conversation.id, missing: missing})
+		a.emitLifecycle(ctx, lifecycleSnapshot{method: "tools/call", request: originalRequest, result: result, err: err, started: started, toolName: name, arguments: arguments, intent: intent, conversationID: conversation.id, missing: missing, attribution: attribution, identify: identify, failure: classifyToolFailure(result, err)})
 	}()
 	if missing {
 		return applyConversationResult(missingCapabilityResult(), conversation, ownership), nil

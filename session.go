@@ -76,7 +76,12 @@ func (a *Analytics) generatedConnectionSessionID(connection mcp.Session) string 
 	return sessionID
 }
 
-func protocolSessionID(request mcp.Request) string {
+func protocolSessionID(request mcp.Request) (sessionID string) {
+	defer func() {
+		if recover() != nil {
+			sessionID = ""
+		}
+	}()
 	if request == nil || request.GetSession() == nil {
 		return ""
 	}

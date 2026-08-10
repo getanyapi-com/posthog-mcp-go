@@ -46,7 +46,12 @@ func requestMeta(request mcp.Request) (meta map[string]any) {
 	return params.GetMeta()
 }
 
-func initializeParams(request mcp.Request) *mcp.InitializeParams {
+func initializeParams(request mcp.Request) (params *mcp.InitializeParams) {
+	defer func() {
+		if recover() != nil {
+			params = nil
+		}
+	}()
 	if params, ok := request.GetParams().(*mcp.InitializeParams); ok {
 		return params
 	}

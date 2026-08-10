@@ -2,7 +2,6 @@ package posthogmcp
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -23,18 +22,28 @@ func (a *Analytics) Middleware() mcp.Middleware {
 			if !a.Enabled() || middlewareVisited(ctx, a) {
 				return next(ctx, method, request)
 			}
+			if lifecycleEventName(method, false) == "" {
+				return next(ctx, method, request)
+			}
 			ctx = context.WithValue(ctx, middlewareVisitKey{}, &middlewareVisit{analytics: a, parent: middlewareVisits(ctx)})
 			started := time.Now()
 
 			if method == "tools/call" {
 				return a.handleToolCall(ctx, state, next, request, started)
 			}
+			attribution := a.resolveAttribution(request, "")
+			identify := a.resolveIdentity(ctx, request, &attribution)
+			ctx = withRequestAttribution(ctx, attribution)
 			defer func() {
 				if recovered := recover(); recovered != nil {
-					a.emitLifecycle(ctx, lifecycleSnapshot{method: method, request: request, err: fmt.Errorf("panic: %v", recovered), started: started})
+					a.emitLifecycle(ctx, lifecycleSnapshot{method: method, request: request, started: started, attribution: attribution, identify: identify, failure: classifyPanic(recovered)})
 					panic(recovered)
 				}
-				a.emitLifecycle(ctx, lifecycleSnapshot{method: method, request: request, result: result, err: err, started: started})
+				if method == "initialize" {
+					initialize, _ := result.(*mcp.InitializeResult)
+					a.rememberInitialize(&attribution, initialize)
+				}
+				a.emitLifecycle(ctx, lifecycleSnapshot{method: method, request: request, result: result, err: err, started: started, attribution: attribution, identify: identify})
 			}()
 			result, err = next(ctx, method, request)
 			if err == nil && method == "tools/list" {

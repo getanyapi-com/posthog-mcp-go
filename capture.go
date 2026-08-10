@@ -56,13 +56,17 @@ func (a *Analytics) captureEvent(ctx context.Context, input Event, request mcp.R
 		properties[key] = value
 	}
 	properties[PropertySource] = Source
+	event.Properties = properties
+	if attribution, ok := requestAttributionFromContext(ctx); ok {
+		attribution.applyToEvent(&event)
+		properties = event.Properties
+	}
 	if _, exists := properties[PropertySessionID]; !exists && a.fallbackSession != "" {
 		properties[PropertySessionID] = a.fallbackSession
 	}
 	if _, identified := properties["$set"]; !identified && event.DistinctID == properties[PropertySessionID] {
 		properties["$process_person_profile"] = false
 	}
-	event.Properties = properties
 	event = sanitizeAndBoundEvent(event)
 
 	processed, keep := a.applyBeforeSend(ctx, event)
