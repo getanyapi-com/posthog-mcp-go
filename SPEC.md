@@ -98,6 +98,7 @@ The default context description is the exact upstream PostHog description.
 `Server.AddReceivingMiddleware`. It observes:
 
 - `initialize`
+- `server/discover` as `$mcp_initialize` on MCP 2026-07-28 and newer
 - `tools/list`
 - `tools/call`
 - `resources/list`
@@ -107,6 +108,11 @@ The default context description is the exact upstream PostHog description.
 
 Tools registered before or after middleware attachment are covered because the
 middleware wraps the central receiving handler.
+
+The MCP Go SDK annotates `server/discover` results with server identity only
+after receiving middleware returns. Therefore the canonical discovery event has
+client and protocol attribution immediately; applications that require server
+name/version on that event supply them through `EventProperties`.
 
 For ordinary requests, downstream is called exactly once and its result and
 error are preserved. Wrapper-owned changes are limited to enabled features:

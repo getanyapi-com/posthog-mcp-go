@@ -129,13 +129,14 @@ func lifecycleEventName(method string, missing bool) string {
 		return EventMissingCapability
 	}
 	return map[string]string{
-		"initialize":     EventInitialize,
-		"tools/list":     EventToolsList,
-		"tools/call":     EventToolCall,
-		"resources/list": EventResourcesList,
-		"resources/read": EventResourceRead,
-		"prompts/list":   EventPromptsList,
-		"prompts/get":    EventPromptGet,
+		"initialize":      EventInitialize,
+		"server/discover": EventInitialize,
+		"tools/list":      EventToolsList,
+		"tools/call":      EventToolCall,
+		"resources/list":  EventResourcesList,
+		"resources/read":  EventResourceRead,
+		"prompts/list":    EventPromptsList,
+		"prompts/get":     EventPromptGet,
 	}[method]
 }
 

@@ -51,8 +51,13 @@ func TestCombinedLifecycleAttributesIdentityCustomCaptureAndToolException(t *tes
 
 	captures := client.snapshot()
 	initialize := findCapture(t, captures, EventInitialize)
-	if initialize.Properties[PropertyServerName] != "fixture-server" || initialize.Properties[PropertyServerVersion] != "1.2.3" {
+	serverName, _ := initialize.Properties[PropertyServerName].(string)
+	serverVersion, _ := initialize.Properties[PropertyServerVersion].(string)
+	if serverName != "" && (serverName != "fixture-server" || serverVersion != "1.2.3") {
 		t.Fatalf("initialize server attribution = %#v", initialize.Properties)
+	}
+	if initialize.Properties[PropertyProtocolVersion] == "" {
+		t.Fatalf("initialize protocol attribution = %#v", initialize.Properties)
 	}
 	sessionID, ok := initialize.Properties[PropertySessionID].(string)
 	if !ok || sessionID == "" {
